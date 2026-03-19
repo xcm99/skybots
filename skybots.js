@@ -21,7 +21,6 @@ const TG_TOKEN = process.env.TG_BOT_TOKEN || '';
 const TG_CHAT_ID = process.env.TG_CHAT_ID || '';
 
 // ================= 辅助函数 =================
-// 获取当前日本时间字符串 (TG 通知用)
 function nowStr() {
     return new Date().toLocaleString('zh-CN', {
         timeZone: 'Asia/Tokyo',
@@ -31,7 +30,6 @@ function nowStr() {
     }).replace(/\//g, '-');
 }
 
-// 通用发送 TG 图片函数 (带重试逻辑)
 function sendTGPhoto(caption, imagePath) {
     return new Promise((resolve) => {
         if (!TG_TOKEN || !TG_CHAT_ID || !fs.existsSync(imagePath)) {
@@ -61,7 +59,7 @@ function sendTGPhoto(caption, imagePath) {
                 'Content-Type': `multipart/form-data; boundary=${boundary}`,
                 'Content-Length': postData.length,
             },
-            timeout: 20000 // 20秒超时
+            timeout: 20000 
         };
 
         const req = https.request(options, (res) => {
@@ -75,7 +73,7 @@ function sendTGPhoto(caption, imagePath) {
 
         req.on('error', (e) => {
             console.log(`❌ TG 推送异常: ${e.message}`);
-            resolve(); // 异常不中断主脚本
+            resolve(); 
         });
 
         req.on('timeout', () => {
@@ -116,7 +114,7 @@ async function main() {
 
     const context = await browser.newContext(contextOptions);
     const page = await context.newPage();
-    page.setDefaultTimeout(45000); // CF 盾超时
+    page.setDefaultTimeout(45000); 
 
     try {
         console.log(`🌐 访问目标网页: ${TARGET_URL}`);
@@ -128,19 +126,44 @@ async function main() {
         if (page.url().includes('projects')) {
             console.log('✅ 会话有效，免密登录成功，直接进入 Projects 页面！');
         } else {
-            console.log('🛡️ 等待突破 Cloudflare 盾...');
+            console.log('🛡️ 正在解析登录页面...');
             
-            // 等待账号输入框出现，这意味着 CF 盾通过
-            const emailInput = page.locator('input[type="email"]');
-            await emailInput.waitFor({ state: 'visible', timeout: 60000 });
-            console.log('✅ CF盾穿透成功，表单加载！');
+            // 👈 升级 1：使用多重选择器，兼容 text, email, username 等各种写法的输入框
+            const accountInput = page.locator('input[type="email"], input[name="email"], input[name="username"], input[type="text"]').first();
+            await accountInput.waitFor({ state: 'visible', timeout: 60000 });
+            console.log('✅ 登录表单已加载！');
 
             if (!ACCOUNT || !PASSWORD) throw new Error('❌ 未配置 SKYBOTS secrets');
 
             console.log('✏️ 填写账号密码...');
-            await emailInput.fill(ACCOUNT);
-            await page.locator('input[type="password"]').fill(PASSWORD);
-            await page.locator('button[type="submit"]').click();
+            await accountInput.fill(ACCOUNT);
+            await page.locator('input[type="password"], input[name="password"]').first().fill(PASSWORD);
+            
+            // 👈 升级 2：对付 CF Turnstile 验证框
+            console.log('🛡️ 尝试处理 Cloudflare 验证框...');
+            await page.waitForTimeout(2000); // 稍微等盾加载稳
+            try {
+                // 寻找包含 challenges 或 turnstile 的 iframe
+                const cfIframe = page.locator('iframe[src*="challenges"], iframe[src*="turnstile"]').first();
+                if (await cfIframe.isVisible({ timeout: 5000 })) {
+                    console.log('👆 发现 CF 验证框，尝试模拟鼠标点击...');
+                    const box = await cfIframe.boundingBox();
+                    if (box) {
+                        // 将鼠标移动到 iframe 的正中心并点击
+                        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                        console.log('⏳ 等待 CF 验证打钩 (5秒)...');
+                        await page.waitForTimeout(5000); 
+                    }
+                } else {
+                    console.log('未检测到需要点击的 CF 验证框，继续...');
+                }
+            } catch (e) {
+                console.log('⚠️ CF 验证框处理跳过 (可能并未出现)');
+            }
+
+            console.log('📤 提交登录请求...');
+            // 兼容法文 Se connecter 和英文 Login
+            await page.locator('button[type="submit"], button:has-text("Se connecter"), button:has-text("Login")').first().click();
 
             console.log('⏳ 等待页面跳转确认登录成功...');
             await page.waitForURL(/projects/, { timeout: 20000 });
@@ -151,30 +174,23 @@ async function main() {
         }
 
         // ==========================================
-        // 👇 核心业务逻辑 (Projects 页面续期)
+        // 👇 核心业务逻辑 (Projects 页面检测续期)
         // ==========================================
         console.log('🚀 开始执行续期检测逻辑...');
         
-        // 确保页面加载完成，尤其是你要寻找的 Renew 按键
         await page.waitForLoadState('networkidle'); 
         await page.waitForTimeout(3000); 
 
-        // 定义选择器，CF面板的 Renew 按钮通常是 button，text 包含 Renew
-        // 这里用了Locator定位器，可以根据实际网页 DOM 结构调整选择器
+        // 寻找包含 Renew 的按钮或链接
         const renewBtn = page.locator('button:has-text("Renew"), a:has-text("Renew")').first();
 
-        // 寻找按键
         if (await renewBtn.isVisible()) {
             console.log('🔘 找到 "Renew" 续期按键，点击续期...');
-            
-            // 点击
             await renewBtn.click();
             console.log('✅ 按钮已点击，等待 10 秒后截图结果...');
             
-            // 等待十秒
             await page.waitForTimeout(10000);
             
-            // 截图发送 TG 通知
             const shotPath = 'renew_success.png';
             await page.screenshot({ path: shotPath, fullPage: true });
             await sendTGPhoto('🎉 续期按钮已找到并点击！今日续期完成，请查看结果截图。', shotPath);
@@ -183,7 +199,6 @@ async function main() {
         } else {
             console.log('⏰ 未找到 "Renew" 续期按键，今日可能无需续期。');
             
-            // 截图发送 TG 通知
             const shotPath = 'renew_not_needed.png';
             await page.screenshot({ path: shotPath, fullPage: true });
             await sendTGPhoto('⏰ 今日暂无需续期 (未找到 Renew 按键)。', shotPath);
@@ -191,13 +206,11 @@ async function main() {
         }
 
     } catch (error) {
-        // 全局异常捕捉，发送失败截图
         console.error(`❌ 脚本执行异常: ${error.message}`);
         const errPath = 'skybots_error.png';
         await page.screenshot({ path: errPath, fullPage: true });
-        // 脚本本身报错，也通知 TG
         await sendTGPhoto(`❌ 脚本运行出错了: ${error.message}`, errPath);
-        throw error; // 仍然抛出，让 Action 变红
+        throw error; 
     } finally {
         await context.close();
         await browser.close();
