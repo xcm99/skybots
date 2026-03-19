@@ -1,4 +1,4 @@
-// skybots.js - 终极修复版 (对付 CF 盾精准点击)
+// skybots.js - 终极修复版 (吸收 SeleniumBase 过盾精髓)
 const { chromium } = require('playwright-extra'); 
 const stealth = require('puppeteer-extra-plugin-stealth')(); 
 chromium.use(stealth); 
@@ -67,15 +67,8 @@ function sendTGPhoto(caption, imagePath) {
             resolve();
         });
 
-        req.on('error', (e) => {
-            console.log(`❌ TG 推送异常: ${e.message}`);
-            resolve(); 
-        });
-        req.on('timeout', () => {
-            console.log('⏰ TG 推送超时，跳过。');
-            req.destroy();
-            resolve();
-        });
+        req.on('error', (e) => resolve());
+        req.on('timeout', () => { req.destroy(); resolve(); });
         req.write(postData);
         req.end();
     });
@@ -125,48 +118,70 @@ async function main() {
             await accountInput.fill(ACCOUNT);
             await page.locator('input[type="password"], input[name="password"]').first().fill(PASSWORD);
             
-            // 👈 终极 CF 盾爆破逻辑：无视名字，只看尺寸，精确点击左侧
-            console.log('🛡️ 寻找并尝试点击 Cloudflare 验证框...');
-            await page.waitForTimeout(4000); // 等盾彻底渲染
+            // =========================================================
+            // 👇 融合 Python 逻辑的终极 CF 盾爆破方案
+            // =========================================================
+            console.log('🛡️ 开始处理 Cloudflare 验证框...');
+            await page.waitForTimeout(3000);
 
-            let cfClicked = false;
-            try {
-                // 获取页面上所有的 iframe
+            // 秘诀 1：清理可能遮挡 CF 盾的 Cookie 弹窗
+            await page.evaluate(() => {
+                const buttons = document.querySelectorAll('button');
+                for (let i = 0; i < buttons.length; i++) {
+                    const text = buttons[i].textContent.trim().toLowerCase();
+                    if (['consent', 'accept', 'accept all', 'got it', 'i agree'].includes(text)) {
+                        buttons[i].click();
+                    }
+                }
+            });
+            console.log('🧹 已清理潜在的 Cookie 遮挡弹窗');
+            await page.waitForTimeout(1000);
+
+            // 秘诀 2 & 3：循环尝试点击与底层验证
+            let cfPassed = false;
+            for (let attempt = 0; attempt < 4; attempt++) {
+                // 底层验证：检查 cf-turnstile-response 是否生成
+                const isDone = await page.evaluate(() => {
+                    const cf = document.querySelector("input[name='cf-turnstile-response']");
+                    return cf && cf.value && cf.value.length > 20;
+                });
+
+                if (isDone) {
+                    console.log(`✅ Turnstile 已底层验证通过！(第 ${attempt} 次尝试)`);
+                    cfPassed = true;
+                    break;
+                }
+
+                console.log(`🖱️ 尝试定位并点击盾 (第 ${attempt + 1} 次)...`);
                 const iframes = page.locator('iframe');
-                const iframeCount = await iframes.count();
-                console.log(`🔍 页面上共发现了 ${iframeCount} 个 iframe`);
+                const count = await iframes.count();
+                let clicked = false;
 
-                for (let i = 0; i < iframeCount; i++) {
+                for (let i = 0; i < count; i++) {
                     const frame = iframes.nth(i);
                     const box = await frame.boundingBox();
                     
-                    // CF 盾通常是一个长方形，宽度大于 250，高度大约 65
+                    // 尺寸判定
                     if (box && box.width > 200 && box.height > 40) {
-                        console.log(`👆 锁定疑似 CF 验证盾 (宽:${box.width}, 高:${box.height})`);
-                        
-                        // 【核心玄学】点方块！不要点中心！
-                        // 盾的打钩框固定在左侧。我们往左偏移，点在 x坐标 + 30 像素的位置
                         const targetX = box.x + 30;
                         const targetY = box.y + (box.height / 2);
-                        
-                        // 模拟人类滑动鼠标并点击
-                        await page.mouse.move(targetX, targetY, { steps: 10 });
-                        await page.waitForTimeout(500);
+                        await page.mouse.move(targetX, targetY, { steps: 15 });
+                        await page.waitForTimeout(300);
                         await page.mouse.click(targetX, targetY);
-                        
-                        cfClicked = true;
-                        console.log('⏳ 已精确点击盾的最左侧，等待验证动画 (8秒)...');
-                        await page.waitForTimeout(8000); 
-                        break; // 点中一个就跳出循环
+                        clicked = true;
+                        break;
                     }
                 }
 
-                if (!cfClicked) {
-                    console.log('⚠️ 没找到符合尺寸的盾，直接盲交试试...');
+                if (clicked) {
+                    console.log('⏳ 已点击坐标，等待验证响应 (5秒)...');
+                    await page.waitForTimeout(5000);
+                } else {
+                    console.log('⚠️ 未找到合适尺寸的盾容器，等待重试...');
+                    await page.waitForTimeout(3000);
                 }
-            } catch (e) {
-                console.log('⚠️ CF 处理模块报错: ' + e.message);
             }
+            // =========================================================
 
             console.log('📤 提交登录请求...');
             await page.locator('button[type="submit"], button:has-text("Se connecter"), button:has-text("Login")').first().click();
@@ -179,9 +194,6 @@ async function main() {
             await context.storageState({ path: STATE_FILE });
         }
 
-        // ==========================================
-        // 👇 核心业务逻辑 (Projects 页面检测续期)
-        // ==========================================
         console.log('🚀 开始执行续期检测逻辑...');
         await page.waitForLoadState('networkidle'); 
         await page.waitForTimeout(3000); 
@@ -196,18 +208,14 @@ async function main() {
             
             const shotPath = 'renew_success.png';
             await page.screenshot({ path: shotPath, fullPage: true });
-            let capStr = '🎉 续期按钮已找到并点击！今日续期完成，请查看结果截图。';
-            if (cfClicked) capStr += '\n(🛡️ 成功突破 Cloudflare 盾)';
-            await sendTGPhoto(capStr, shotPath);
+            await sendTGPhoto('🎉 续期按钮已找到并点击！今日续期完成，请查看结果截图。', shotPath);
             console.log('🎉 续期流程处理完毕，已发送图片通知。');
 
         } else {
             console.log('⏰ 未找到 "Renew" 续期按键，今日可能无需续期。');
             const shotPath = 'renew_not_needed.png';
             await page.screenshot({ path: shotPath, fullPage: true });
-            let capStr = '⏰ 今日暂无需续期 (未找到 Renew 按键)。';
-            if (cfClicked) capStr += '\n(🛡️ 成功突破 Cloudflare 盾)';
-            await sendTGPhoto(capStr, shotPath);
+            await sendTGPhoto('⏰ 今日暂无需续期 (未找到 Renew 按键)。', shotPath);
             console.log('⏰ 已发送暂无需续期通知。');
         }
 
