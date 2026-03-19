@@ -1,0 +1,85 @@
+name: 🤖 Skybots Auto Renew
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *' # 每天 UTC 2:30 运行
+
+# ⚠️ 必须要有写入权限，为了把新获取的 Cookie 提交回仓库
+permissions:
+  contents: write
+
+jobs:
+  run_renewal:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 拉取代码
+        uses: actions/checkout@v4
+        with:
+          # 如果是私有仓库并且用到了外部拉取，记得开启 token
+          # token: ${{ secrets.REPO_TOKEN }}
+          path: .
+
+      - name: 🟢 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 安装依赖 & Playwright 浏览器
+        run: |
+          npm init -y
+          npm install playwright
+          npx playwright install chromium --with-deps
+
+      - name: 🛡️ 启动 GOST 代理隧道
+        env:
+          GOST_PROXY: ${{ secrets.GOST_PROXY }}
+        run: |
+          if [ -z "$GOST_PROXY" ]; then
+            echo "[INFO] 未配置代理，直连模式"
+            exit 0
+          fi
+          echo "📦 下载并启动 GOST..."
+          wget -q https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
+          gunzip gost-linux-amd64-2.11.5.gz
+          chmod +x gost-linux-amd64-2.11.5
+          nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$GOST_PROXY" > gost.log 2>&1 &
+          sleep 5
+          echo "✅ GOST 已启动，测试连通性..."
+          curl -s -x http://127.0.0.1:8080 https://api.ipify.org
+          # 注入环境变量给下一步的 JS 脚本使用
+          echo "PROXY_URL=http://127.0.0.1:8080" >> $GITHUB_ENV
+
+      - name: 🚀 运行 Skybots 脚本
+        env:
+          SKYBOTS_ACCOUNT: ${{ secrets.SKYBOTS_ACCOUNT }}
+          SKYBOTS_PASSWORD: ${{ secrets.SKYBOTS_PASSWORD }}
+          # PROXY_URL 会自动从上一步的 env 里读取
+        run: |
+          # 如果你的 js 文件放在子目录，这里就 cd 进去，比如: cd scripts/skybots
+          node skybots.js
+
+      - name: 💾 提交会话状态 (Cookie)
+        if: success()
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          
+          # 检查 auth_state.json 是否有更新或新生成
+          if [[ -n $(git status -s auth_state.json) ]]; then
+            echo "检测到会话状态更新，正在提交..."
+            git add auth_state.json
+            git commit -m "Auto-update auth state [skip ci]"
+            git push
+          else
+            echo "会话状态无变化，跳过提交。"
+          fi
+
+      - name: 📸 上传报错截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skybots-debug
+          # 抓取脚本报错时生成的截图
+          path: skybots_error.png
+          retention-days: 5
