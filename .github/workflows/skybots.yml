@@ -2,16 +2,12 @@ name: 🤖 Skybots Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 2 * * *' # 每天 UTC 2:30 运行
-
-# 必须要有写入权限，为了把新获取的 Cookie 提交回仓库
-permissions:
-  contents: write
+    - cron: '30 2 * * *'
 
 jobs:
   run_renewal:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # 防止过盾时卡死导致资源浪费
+    timeout-minutes: 15
 
     steps:
       - name: 📥 拉取代码
@@ -19,72 +15,48 @@ jobs:
         with:
           path: .
 
-      - name: 🟢 安装 Node.js
-        uses: actions/setup-node@v4
+      - name: 🐍 设置 Python
+        uses: actions/setup-python@v5
         with:
-          node-version: '20'
+          python-version: '3.10'
 
-      - name: 📦 安装依赖 & 虚拟显示器 (应对 CF 盾)
+      - name: 📦 安装底层依赖与浏览器
         run: |
-          npm init -y
-          # 安装 Playwright 核心、隐身插件增强包
-          npm install playwright playwright-extra puppeteer-extra-plugin-stealth
-          npx playwright install chromium --with-deps
-          # 安装 xvfb 虚拟显示器，供 headless: false 模式使用
+          # 【核心】安装 xdotool(用于物理点击) 和 xvfb(虚拟屏幕)
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb xdotool
+          
+          # 安装 SeleniumBase 并初始化 Chrome
+          python -m pip install --upgrade pip
+          pip install seleniumbase requests
+          seleniumbase install chromedriver
 
       - name: 🛡️ 启动 GOST 代理隧道
         env:
           GOST_PROXY: ${{ secrets.GOST_PROXY }}
         run: |
-          if [ -z "$GOST_PROXY" ]; then
-            echo "[INFO] 未配置代理，降级为直连模式"
-            exit 0
-          fi
-          echo "📦 下载并启动 GOST..."
+          if [ -z "$GOST_PROXY" ]; then exit 0; fi
           wget -q https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
           gunzip gost-linux-amd64-2.11.5.gz
           chmod +x gost-linux-amd64-2.11.5
           nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$GOST_PROXY" > gost.log 2>&1 &
           sleep 5
-          echo "✅ GOST 已启动，测试连通性..."
-          curl -s -x http://127.0.0.1:8080 https://api.ipify.org
-          # 写入环境变量，供 JS 脚本读取
-          echo "PROXY_URL=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "PROXY_URL=socks5://127.0.0.1:8080" >> $GITHUB_ENV
 
-      - name: 🚀 运行 Skybots 脚本 (带虚拟屏幕与 TG 通知)
+      - name: 🚀 运行 Skybots Python 脚本
         env:
           SKYBOTS_ACCOUNT: ${{ secrets.SKYBOTS_ACCOUNT }}
           SKYBOTS_PASSWORD: ${{ secrets.SKYBOTS_PASSWORD }}
-          # 👇 新增 TG 通知变量
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          # PROXY_URL 会自动从 GITHUB_ENV 读取
         run: |
-          # 【核心】使用 xvfb-run 启动 Node.js
-          xvfb-run -a node skybots.js
+          # 使用 xvfb-run 分配虚拟屏幕，让 xdotool 能够正常点击
+          xvfb-run -a python skybots.py
 
-      - name: 💾 提交会话状态 (Cookie)
-        if: success()
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
-          
-          if [[ -n $(git status -s auth_state.json) ]]; then
-            echo "检测到会话状态更新，正在提交..."
-            git add auth_state.json
-            git commit -m "Auto-update auth state [skip ci]"
-            git push
-          else
-            echo "会话状态无变化，跳过提交。"
-          fi
-
-      - name: 📸 上传所有运行截图
-        if: always() # 无论成功失败都上传
+      - name: 📸 上传报错截图
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: skybots-run-screenshots
-          # 抓取脚本生成的任何 PNG 截图
+          name: skybots-debug-png
           path: "*.png"
           retention-days: 5
