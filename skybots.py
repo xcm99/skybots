@@ -15,7 +15,7 @@ DASHBOARD_URL = "https://dash.skybots.tech/projects"
 
 ACCOUNT = os.environ.get("SKYBOTS_ACCOUNT", "")
 PASSWORD = os.environ.get("SKYBOTS_PASSWORD", "")
-PROXY = os.environ.get("PROXY_URL", "")
+skybots_PROXY_NODE = os.environ.get("skybots_PROXY_NODE", "").strip()
 
 TG_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "")
@@ -108,9 +108,13 @@ def main():
         "locale": "en", 
         "chromium_arg": "--disable-dev-shm-usage,--no-sandbox,--start-maximized"
     }
-    if PROXY:
-        opts["proxy"] = PROXY
-        print(f"🛡️ 使用代理: {PROXY}")
+    
+    # 注入代理逻辑
+    if skybots_PROXY_NODE:
+        opts["proxy"] = skybots_PROXY_NODE
+        print("🛡️ 已启用代码级代理: ***")
+    else:
+        print("🛡️ 未检测到代理配置，将直连运行")
 
     with SB(**opts) as sb:
         # 强制 xvfb 窗口大小
