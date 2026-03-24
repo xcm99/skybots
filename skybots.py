@@ -185,12 +185,16 @@ def main():
                 sb.save_screenshot(shot_path)
                 send_tg_photo("⏰ 暂无需续期 (续期将于到期前 3 天提供)。", shot_path)
             else:
-                # 修复选择器：使用 SeleniumBase 支持的 :contains() 以及更稳健的 XPath
+                # 修复选择器：支持英语(Renew)和法语(Renouveler)
                 renew_selectors = [
                     'button:contains("Renew")', 
+                    'button:contains("Renouveler")',
                     'a:contains("Renew")',
+                    'a:contains("Renouveler")',
                     '//button[contains(., "Renew")]',
-                    '//*[contains(text(), "Renew")]'
+                    '//button[contains(., "Renouveler")]',
+                    '//*[contains(text(), "Renew")]',
+                    '//*[contains(text(), "Renouveler")]'
                 ]
                 found_btn = False
                 
