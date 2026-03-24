@@ -1,4 +1,4 @@
-name: 🤖 Skybots Auto Renew
+name: Skybots Auto Renew
 on:
   workflow_dispatch:
   schedule:
@@ -10,28 +10,25 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: 📥 拉取代码
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           path: .
 
-      - name: 🐍 设置 Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 📦 安装底层依赖与浏览器
+      - name: Install dependencies
         run: |
-          # 【核心】安装 xdotool(用于物理点击) 和 xvfb(虚拟屏幕)
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool
-          
-          # 安装 SeleniumBase 并初始化 Chrome
           python -m pip install --upgrade pip
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: 🛡️ 启动 GOST 代理隧道
+      - name: Start proxy
         env:
           skybots_PROXY_NODE: ${{ secrets.skybots_PROXY_NODE }}
         run: |
@@ -43,20 +40,12 @@ jobs:
           sleep 5
           echo "PROXY_URL=socks5://127.0.0.1:8080" >> $GITHUB_ENV
 
-      - name: 🚀 运行 Skybots Python 脚本
+      - name: Run script
         env:
-          SKYBOTS_ACCOUNT: ${{ secrets.SKYBOTS_ACCOUNT }}
-          SKYBOTS_PASSWORD: ${{ secrets.SKYBOTS_PASSWORD }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          S_A: ${{ secrets.SKYBOTS_ACCOUNT }}
+          S_P: ${{ secrets.SKYBOTS_PASSWORD }}
+          N_T: ${{ secrets.TG_BOT_TOKEN }}
+          N_I: ${{ secrets.TG_CHAT_ID }}
+          berry_PROXY_NODE: ${{ env.PROXY_URL }}
         run: |
-          # 使用 xvfb-run 分配虚拟屏幕，让 xdotool 能够正常点击
           xvfb-run -a python skybots.py
-
-#      - name: 📸 上传报错截图
-#        if: always()
-#        uses: actions/upload-artifact@v4
-#        with:
-#         name: skybots-debug-png
-#         path: "*.png"
-#         retention-days: 5
