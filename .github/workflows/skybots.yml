@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
           path: .
@@ -20,32 +20,32 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool
+          
           python -m pip install --upgrade pip
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: Start proxy
+      - name: Start Proxy Tunnel
         env:
-          skybots_PROXY_NODE: ${{ secrets.skybots_PROXY_NODE }}
+          berry_PROXY_NODE: ${{ secrets.berry_PROXY_NODE }}
         run: |
-          if [ -z "$skybots_PROXY_NODE" ]; then exit 0; fi
+          if [ -z "$berry_PROXY_NODE" ]; then exit 0; fi
           wget -q https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
           gunzip gost-linux-amd64-2.11.5.gz
           chmod +x gost-linux-amd64-2.11.5
-          nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$skybots_PROXY_NODE" > gost.log 2>&1 &
+          nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$berry_PROXY_NODE" > gost.log 2>&1 &
           sleep 5
-          echo "PROXY_URL=socks5://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "berry_PROXY_NODE=socks5://127.0.0.1:8080" >> $GITHUB_ENV
 
-      - name: Run script
+      - name: Run Skybots Python Script
         env:
-          S_A: ${{ secrets.SKYBOTS_ACCOUNT }}
-          S_P: ${{ secrets.SKYBOTS_PASSWORD }}
-          N_T: ${{ secrets.TG_BOT_TOKEN }}
-          N_I: ${{ secrets.TG_CHAT_ID }}
-          berry_PROXY_NODE: ${{ env.PROXY_URL }}
+          SKYBOTS_ACCOUNT: ${{ secrets.SKYBOTS_ACCOUNT }}
+          SKYBOTS_PASSWORD: ${{ secrets.SKYBOTS_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
           xvfb-run -a python skybots.py
