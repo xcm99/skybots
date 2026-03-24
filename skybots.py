@@ -173,12 +173,11 @@ def main():
                     sb.uc_open_with_reconnect(DASHBOARD_URL, reconnect_time=5)
                     time.sleep(5)
 
-            print("🚀 查找续期按键...")
-            sb.sleep(3)
+            print("🚀 等待页面数据加载并查找续期按键...")
+            # 增加等待时间，确保前端 AJAX 请求将项目列表和按钮渲染完毕
+            sb.sleep(8) 
             
             # 【高级容错逻辑】检测图 12 中的黄色提示消息
-            # 如果能找到 "Renewal will be available 3 days before expiration"
-            # 就意味着 Renew 按钮现在按规定不会出现。
             too_early_sel = "//div[contains(., 'Renewal will be available 3 days before Expiration')]"
             if sb.is_element_visible(too_early_sel):
                 print("⏰ 检测到'续期将于到期前 3 天提供'提示，暂无需续期。")
@@ -186,12 +185,18 @@ def main():
                 sb.save_screenshot(shot_path)
                 send_tg_photo("⏰ 暂无需续期 (续期将于到期前 3 天提供)。", shot_path)
             else:
-                renew_selectors = ['button:has-text("Renew")', 'a:has-text("Renew")']
+                # 修复选择器：使用 SeleniumBase 支持的 :contains() 以及更稳健的 XPath
+                renew_selectors = [
+                    'button:contains("Renew")', 
+                    'a:contains("Renew")',
+                    '//button[contains(., "Renew")]',
+                    '//*[contains(text(), "Renew")]'
+                ]
                 found_btn = False
                 
                 for sel in renew_selectors:
                     if sb.is_element_visible(sel):
-                        print("🔘 找到续期按键，点击续期...")
+                        print(f"🔘 找到续期按键 (匹配器: {sel})，点击续期...")
                         sb.click(sel)
                         found_btn = True
                         break
@@ -201,9 +206,8 @@ def main():
                     sb.sleep(10)
                     shot_path = "renew_success.png"
                     sb.save_screenshot(shot_path)
-                    send_tg_photo("🎉 续期按钮已找到并点击！(突破 Cloudflare 盾)", shot_path)
+                    send_tg_photo("🎉 续期按钮已找到并点击！", shot_path)
                 else:
-                    # 这意味着既没有黄色提示框，也没有 Renew 按钮，可能出了问题，截图汇报。
                     print("❌ 未检测到续期按键。")
                     shot_path = "renew_error.png"
                     sb.save_screenshot(shot_path)
