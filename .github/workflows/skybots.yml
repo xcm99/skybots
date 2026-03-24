@@ -1,4 +1,4 @@
-name: Skybots Auto Renew
+name: 🤖 Skybots Auto Renew
 on:
   workflow_dispatch:
   schedule:
@@ -10,42 +10,53 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout Code
+      - name: 📥 拉取代码
         uses: actions/checkout@v4
         with:
           path: .
 
-      - name: Setup Python
+      - name: 🐍 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: 📦 安装底层依赖与浏览器
         run: |
+          # 【核心】安装 xdotool(用于物理点击) 和 xvfb(虚拟屏幕)
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool
           
+          # 安装 SeleniumBase 并初始化 Chrome
           python -m pip install --upgrade pip
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      - name: Start Proxy Tunnel
+      - name: 🛡️ 启动 GOST 代理隧道
         env:
-          berry_PROXY_NODE: ${{ secrets.berry_PROXY_NODE }}
+          skybots_PROXY_NODE: ${{ secrets.skybots_PROXY_NODE }}
         run: |
-          if [ -z "$berry_PROXY_NODE" ]; then exit 0; fi
+          if [ -z "$skybots_PROXY_NODE" ]; then exit 0; fi
           wget -q https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
           gunzip gost-linux-amd64-2.11.5.gz
           chmod +x gost-linux-amd64-2.11.5
-          nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$berry_PROXY_NODE" > gost.log 2>&1 &
+          nohup ./gost-linux-amd64-2.11.5 -L :8080 -F "$skybots_PROXY_NODE" > gost.log 2>&1 &
           sleep 5
-          echo "berry_PROXY_NODE=socks5://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "PROXY_URL=socks5://127.0.0.1:8080" >> $GITHUB_ENV
 
-      - name: Run Skybots Python Script
+      - name: 🚀 运行 Skybots Python 脚本
         env:
           SKYBOTS_ACCOUNT: ${{ secrets.SKYBOTS_ACCOUNT }}
           SKYBOTS_PASSWORD: ${{ secrets.SKYBOTS_PASSWORD }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: |
+          # 使用 xvfb-run 分配虚拟屏幕，让 xdotool 能够正常点击
           xvfb-run -a python skybots.py
+
+#      - name: 📸 上传报错截图
+#        if: always()
+#        uses: actions/upload-artifact@v4
+#        with:
+#         name: skybots-debug-png
+#         path: "*.png"
+#         retention-days: 5
