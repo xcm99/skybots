@@ -2,7 +2,7 @@ name: 🤖 Skybots Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 2 * * *'
+    - cron: '30 2 */2 * *'
 
 jobs:
   run_renewal:
