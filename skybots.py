@@ -178,9 +178,6 @@ def main():
                     print("⚠️ 原生未通过，尝试 xdotool 物理点击...")
                     coords = get_turnstile_coords(sb)
                     if coords:
-                        # 截图用于调试排查真实坐标位置（不需要时可注释掉）
-                        # sb.save_screenshot(f"before_click_attempt_{attempt+1}.png")
-                        
                         # 加入随机偏移，防止被识别为机械点击，并兼容微小的坐标误差
                         click_x = coords['x'] + random.randint(-8, 8)
                         click_y = coords['y'] + random.randint(-4, 4)
@@ -214,13 +211,30 @@ def main():
             print("🚀 等待页面数据加载并查找续期按键...")
             sb.sleep(8) 
             
+            # ================= 新增：提前抓取剩余时间并写入文件 =================
+            expire_time_text = "未知"
+            try:
+                # 使用 XPath 查找包含 "Expire" 的节点，并获取它父级容器的文本
+                expire_element = sb.wait_for_element('//*[contains(text(), "Expire")]/..', timeout=5)
+                expire_time_text = expire_element.text.replace('\n', ' ').strip()
+                print(f"⏱️ 当前抓取到的剩余时间: {expire_time_text}")
+                
+                # 写入供 Github Actions 解析
+                with open("next_time.txt", "w", encoding="utf-8") as f:
+                    f.write(expire_time_text)
+                print("📝 已将时间写入 next_time.txt，准备供工作流调整时间使用")
+            except Exception as e:
+                print("⚠️ 无法在页面上找到剩余时间文本，将不写入文件。")
+            # ==============================================================
+
             # 【高级容错逻辑】检测图 12 中的黄色提示消息
             too_early_sel = "//div[contains(., 'Renewal will be available 3 days before Expiration')]"
             if sb.is_element_visible(too_early_sel):
                 print("⏰ 检测到'续期将于到期前 3 天提供'提示，暂无需续期。")
                 shot_path = "renew_not_needed.png"
                 sb.save_screenshot(shot_path)
-                send_tg_photo("⏰ 暂无需续期 (续期将于到期前 3 天提供)。", shot_path)
+                # 使用上面抓到的时间发送通知
+                send_tg_photo(f"⏰ 暂无需续期。\n⏱️ 当前状态: {expire_time_text}", shot_path)
             else:
                 # 修复选择器：支持英语(Renew)和法语(Renouveler)
                 renew_selectors = [
@@ -246,16 +260,16 @@ def main():
                     print("⏳ 等待续期处理 (10秒)...")
                     sb.sleep(10)
                     
-                    # 读取剩余时间
-                    expire_time_text = "未知 (提取失败)"
+                    # 续期后，尝试重新抓取一下最新的时间来发通知，并更新文本
                     try:
-                        # 使用 XPath 查找包含 "Expire"（兼容英文 Expires 和法语 Expire）的节点，
-                        # 并获取它父级容器的文本（把 "Expire dans" 和 "4j 17h" 一起抓出来）
                         expire_element = sb.wait_for_element('//*[contains(text(), "Expire")]/..', timeout=5)
                         expire_time_text = expire_element.text.replace('\n', ' ').strip()
-                        print(f"⏱️ 抓取到的当前剩余时间: {expire_time_text}")
+                        print(f"⏱️ 续期后最新的剩余时间: {expire_time_text}")
+                        # 覆盖写入最新的时间，确保 actions 基于成功续期后的时间计算
+                        with open("next_time.txt", "w", encoding="utf-8") as f:
+                            f.write(expire_time_text)
                     except Exception as e:
-                        print("⚠️ 无法在页面上找到剩余时间文本。")
+                        pass
 
                     shot_path = "renew_success.png"
                     sb.save_screenshot(shot_path)
