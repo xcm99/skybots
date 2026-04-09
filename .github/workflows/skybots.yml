@@ -8,7 +8,6 @@ jobs:
   run_renewal:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # 注意：需要为 GITHUB_TOKEN 添加 contents: write 权限才能推送修改后的 yml 文件
     permissions:
       actions: write
       contents: write
@@ -18,6 +17,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: .
+          # 使用你添加的 REPO_TOKEN 来获取修改工作流文件的权限
+          token: ${{ secrets.REPO_TOKEN }}
 
       - name: 🐍 设置 Python
         uses: actions/setup-python@v5
@@ -59,8 +60,9 @@ jobs:
 
       - name: 自动修改下一次运行时间
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WORKFLOW_FILE: .github/workflows/skybots.yml # ⚠️ 注意：如果你的 yml 文件名不是 skybots.yml，请在这里修改为你真实的文件路径！
+          # 推送时也调用你的 REPO_TOKEN
+          GITHUB_TOKEN: ${{ secrets.REPO_TOKEN }}
+          WORKFLOW_FILE: .github/workflows/skybots.yml # ⚠️ 注意：如果你实际的 yml 文件名不是 skybots.yml，请在这里修改为你真实的文件路径！
         run: |
           python3 << 'EOF'
           import re
@@ -78,7 +80,7 @@ jobs:
               with open(date_file, 'r', encoding='utf-8') as f:
                   content = f.read()
               
-              # 匹配类似于 "9j 22h" 的时间格式
+              # 匹配类似于 "9j 22h" 或 "9d 23h" 的时间格式
               match = re.search(r'(\d+)\s*[dj]\s*(\d+)\s*h', content, re.IGNORECASE)
               if match:
                   days = int(match.group(1))
@@ -132,19 +134,10 @@ jobs:
           git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git
           git push
 
-      # (可选) 如果你还需要上传报错截图并保留 5 天，可以取消下方注释
-      # - name: 📸 上传报错截图
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: skybots-debug-png
-      #     path: "*.png"
-      #     retention-days: 5
-
       - name: 🧹 清理旧的运行记录 (仅保留最近 5 个)
         uses: Mattraks/delete-workflow-runs@v2
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.REPO_TOKEN }}
           repository: ${{ github.repository }}
           retain_days: 0
           keep_minimum_runs: 5
