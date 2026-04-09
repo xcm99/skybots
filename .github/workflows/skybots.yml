@@ -2,7 +2,7 @@ name: 🤖 Skybots Auto Renew
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 1 */2 * *'
+    - cron: '59 3 17 4 *' # 下一个: 2026-04-17 03:59 UTC (到期前2天执行)
 
 jobs:
   run_renewal:
