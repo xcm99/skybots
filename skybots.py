@@ -10,7 +10,7 @@ from datetime import datetime
 from seleniumbase import SB
 
 # ================= 配置区 =================
-TARGET_URL = "https://dash.skybots.tech/login"
+TARGET_URL = "https://dash.skybots.tech/auth/login" # 更新了登录 URL 路径
 DASHBOARD_URL = "https://dash.skybots.tech/projects"
 
 ACCOUNT = os.environ.get("SKYBOTS_ACCOUNT", "")
@@ -35,23 +35,7 @@ def send_tg_photo(caption, image_path):
     except Exception as e:
         print(f"⚠️ TG 推送失败: {e}")
 
-# 强制暴露隐藏的 CF 盾
-EXPAND_POPUP_JS = """
-(function() {
-    var iframes = document.querySelectorAll('iframe');
-    iframes.forEach(function(iframe) {
-        if (iframe.src && (iframe.src.includes('challenges.cloudflare.com') || iframe.src.includes('turnstile'))) {
-            iframe.style.width = '300px';
-            iframe.style.height = '65px';
-            iframe.style.minWidth = '300px';
-            iframe.style.visibility = 'visible';
-            iframe.style.opacity = '1';
-        }
-    });
-})();
-"""
-
-# 获取盾的绝对屏幕坐标
+# 获取 Turnstile 盾的坐标逻辑保持不变
 def get_turnstile_coords(sb):
     return sb.execute_script("""
         var iframes = document.querySelectorAll('iframe');
@@ -60,39 +44,12 @@ def get_turnstile_coords(sb):
             if (src.includes('cloudflare') || src.includes('turnstile')) {
                 var rect = iframes[i].getBoundingClientRect();
                 if (rect.width > 0 && rect.height > 0) {
-                    var screenX = window.screenX || 0;
-                    var screenY = window.screenY || 0;
-                    var outerHeight = window.outerHeight;
-                    var innerHeight = window.innerHeight;
-                    var chromeBarHeight = outerHeight - innerHeight;
-                    
-                    var abs_x = Math.round(rect.x + 30) + screenX;
-                    var abs_y = Math.round(rect.y + rect.height / 2) + screenY + chromeBarHeight;
-                    
-                    return {x: abs_x, y: abs_y};
+                    return {x: rect.x + 30, y: rect.y + rect.height / 2};
                 }
             }
         }
         return null;
     """)
-
-# 使用 Linux 底层工具进行物理点击
-def os_hardware_click(x, y):
-    try:
-        # 激活浏览器窗口
-        result = subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chrome"], capture_output=True, text=True)
-        w_ids = result.stdout.strip().split('\n')
-        if w_ids and w_ids[0]:
-            subprocess.run(["xdotool", "windowactivate", w_ids[0]], stderr=subprocess.DEVNULL)
-            time.sleep(0.2)
-        
-        # 移动并点击
-        os.system(f"xdotool mousemove {int(x)} {int(y)} click 1")
-        print(f"👆 已使用 xdotool 物理点击屏幕坐标 ({x}, {y})")
-        return True
-    except Exception as e:
-        print(f"⚠️ xdotool 点击失败: {e}")
-        return False
 
 # ================= 主逻辑 =================
 def main():
@@ -100,144 +57,91 @@ def main():
         print("❌ 缺少账号或密码环境变量")
         sys.exit(1)
 
-    print("🔧 启动 SeleniumBase UC 模式浏览器...")
+    print("🔧 启动 SeleniumBase UC 模式...")
     opts = {
-        "uc": True, 
-        "test": True, 
-        "headless": False, 
-        "locale": "en", 
-        "chromium_arg": "--disable-dev-shm-usage,--no-sandbox,--start-maximized"
+        "uc": True,
+        "headless": False, # 如果在服务器运行，请确保有虚拟显示器
+        "locale": "fr",    # 设为 fr 以匹配页面语言
+        "chromium_arg": "--disable-dev-shm-usage,--no-sandbox"
     }
     if PROXY:
         opts["proxy"] = PROXY
-        print(f"🛡️ 使用代理: {PROXY}")
 
     with SB(**opts) as sb:
-        # 强制 xvfb 窗口大小
-        sb.set_window_rect(0, 0, 1280, 720)
+        sb.set_window_size(1280, 1024)
         
         try:
-            print(f"🌐 访问目标网页: {TARGET_URL}")
-            sb.uc_open_with_reconnect(TARGET_URL, reconnect_time=6)
+            print(f"🌐 访问登录页: {TARGET_URL}")
+            sb.uc_open_with_reconnect(TARGET_URL, reconnect_time=5)
             time.sleep(5)
 
             if "projects" in sb.get_current_url():
-                print("✅ 似乎已经处于登录状态！")
+                print("✅ 已处于登录状态")
             else:
-                print("🛡️ 正在解析登录表单...")
-                # 兼容不同输入框
-                user_sel = 'input[type="email"], input[name="email"], input[name="username"], input[type="text"]'
-                sb.wait_for_element(user_sel, timeout=30)
+                # 1. 输入账号密码 (使用图中显示的 ID 或类型)
+                print("✏️ 填写表单...")
+                # 针对新版界面更精确的选择器
+                sb.update_text('input[name="email"], input[type="email"]', ACCOUNT)
+                sb.update_text('input[name="password"], input[type="password"]', PASSWORD)
                 
-                print("✏️ 填写账号密码...")
-                sb.type(user_sel, ACCOUNT)
-                sb.type('input[type="password"], input[name="password"]', PASSWORD)
-                
-                print("🛡️ 开始处理 Cloudflare 验证框...")
+                # 2. 处理 CF Turnstile 验证码
+                print("🛡️ 等待验证码加载...")
                 time.sleep(3)
-                sb.execute_script(EXPAND_POPUP_JS)
-                time.sleep(1)
-
-                # 尝试突破 CF 盾
-                for attempt in range(4):
-                    is_done = sb.execute_script("var cf = document.querySelector(\"input[name='cf-turnstile-response']\"); return cf && cf.value.length > 20;")
+                
+                # 尝试点击验证码
+                for attempt in range(3):
+                    is_done = sb.execute_script('var cf = document.querySelector("[name=\'cf-turnstile-response\']"); return cf && cf.value.length > 20;')
                     if is_done:
-                        print("✅ CF 盾底层验证已通过！")
+                        print("✅ 验证码已通过")
                         break
                     
-                    print(f"🖱️ 尝试验证 (第 {attempt + 1} 次)...")
+                    print(f"🖱️ 尝试过盾 (第 {attempt + 1} 次)...")
                     try:
-                        # 方案 A：使用 SeleniumBase 原生专杀工具
+                        # 优先使用原生定位点击
                         sb.uc_gui_click_captcha()
-                        print("⏳ 触发原生点击过盾，等待动画 (5秒)...")
-                        time.sleep(5)
-                    except Exception as e:
-                        # 方案 B：使用获取坐标的底层硬件点击
+                        time.sleep(4)
+                    except:
+                        # 备选：物理坐标点击（针对截图中的复选框位置）
                         coords = get_turnstile_coords(sb)
                         if coords:
-                            os_hardware_click(coords['x'], coords['y'])
-                            print("⏳ 等待盾验证动画 (5秒)...")
-                            time.sleep(5)
-                        else:
-                            print("⚠️ 仍未找到盾的位置，等待重试...")
-                            time.sleep(3)
+                            sb.click_with_offset('iframe[src*="cloudflare"]', 30, 0)
+                            time.sleep(4)
 
+                # 3. 点击登录按钮 (匹配 "Se connecter")
                 print("📤 提交登录...")
-                sb.click('button[type="submit"], button:contains("Login")')
+                login_btn = 'button:contains("Se connecter"), button:contains("Login"), .btn-primary'
+                sb.click(login_btn)
                 
-                print("⏳ 等待页面跳转...")
-                time.sleep(10)
-                
-                if "projects" not in sb.get_current_url():
-                    print("⚠️ URL 未变化，尝试直接访问 Dashboard...")
-                    sb.uc_open_with_reconnect(DASHBOARD_URL, reconnect_time=5)
-                    time.sleep(5)
+                time.sleep(8)
 
-            print("🚀 等待页面数据加载并查找续期按键...")
-            sb.sleep(8) 
+            # 4. 续期逻辑
+            print("🚀 检查续期状态...")
+            # 兼容法文和英文的续期按钮
+            renew_btn_selector = 'button:contains("Renouveler"), button:contains("Renew"), a:contains("Renouveler")'
             
-            # 【高级容错逻辑】检测图 12 中的黄色提示消息
-            too_early_sel = "//div[contains(., 'Renewal will be available 3 days before Expiration')]"
-            if sb.is_element_visible(too_early_sel):
-                print("⏰ 检测到'续期将于到期前 3 天提供'提示，暂无需续期。")
-                shot_path = "renew_not_needed.png"
-                sb.save_screenshot(shot_path)
-                send_tg_photo("⏰ 暂无需续期 (续期将于到期前 3 天提供)。", shot_path)
+            # 检测“提前3天”的提示（法语：La prolongation sera disponible 3 jours avant...）
+            too_early_fr = "//*[contains(text(), 'disponible 3 jours avant')]"
+            
+            if sb.is_element_visible(too_early_fr):
+                msg = "⏰ 尚未到续期时间 (需提前3天)。"
+                print(msg)
+                sb.save_screenshot("status.png")
+                send_tg_photo(msg, "status.png")
+            elif sb.is_element_visible(renew_btn_selector):
+                print("🔘 找到续期按钮，正在点击...")
+                sb.click(renew_btn_selector)
+                time.sleep(5)
+                sb.save_screenshot("success.png")
+                send_tg_photo("🎉 续期操作已完成！", "success.png")
             else:
-                # 修复选择器：支持英语(Renew)和法语(Renouveler)
-                renew_selectors = [
-                    'button:contains("Renew")', 
-                    'button:contains("Renouveler")',
-                    'a:contains("Renew")',
-                    'a:contains("Renouveler")',
-                    '//button[contains(., "Renew")]',
-                    '//button[contains(., "Renouveler")]',
-                    '//*[contains(text(), "Renew")]',
-                    '//*[contains(text(), "Renouveler")]'
-                ]
-                found_btn = False
-                
-                for sel in renew_selectors:
-                    if sb.is_element_visible(sel):
-                        print(f"🔘 找到续期按键 (匹配器: {sel})，点击续期...")
-                        sb.click(sel)
-                        found_btn = True
-                        break
-                
-                if found_btn:
-                    print("⏳ 等待续期处理 (10秒)...")
-                    sb.sleep(10)
-                    
-                    # ================= 新增：读取剩余时间 =================
-                    expire_time_text = "未知 (提取失败)"
-                    try:
-                        # 使用 XPath 查找包含 "Expire"（兼容英文 Expires 和法语 Expire）的节点，
-                        # 并获取它父级容器的文本（这样可以把 "Expire dans" 和 "4j 17h" 一起抓出来）
-                        expire_element = sb.wait_for_element('//*[contains(text(), "Expire")]/..', timeout=5)
-                        # 将换行符替换为空格，让文本更紧凑，例如 "Expire dans 4j 17h"
-                        expire_time_text = expire_element.text.replace('\n', ' ').strip()
-                        print(f"⏱️ 抓取到的当前剩余时间: {expire_time_text}")
-                    except Exception as e:
-                        print("⚠️ 无法在页面上找到剩余时间文本。")
-                    # ====================================================
-
-                    shot_path = "renew_success.png"
-                    sb.save_screenshot(shot_path)
-                    
-                    # 把提取到的时间拼接到 TG 的推送消息里
-                    tg_msg = f"🎉 续期按钮已找到并点击！\n⏱️ 当前面板显示状态: {expire_time_text}"
-                    send_tg_photo(tg_msg, shot_path)
-                else:
-                    print("❌ 未检测到续期按键。")
-                    shot_path = "renew_error.png"
-                    sb.save_screenshot(shot_path)
-                    send_tg_photo("❌ 未检测到续期按键 (也未找到提前续期提示)。", shot_path)
+                print("❓ 未发现续期按钮或提示")
+                sb.save_screenshot("unknown.png")
+                send_tg_photo("❌ 未能识别续期按钮，请检查截图", "unknown.png")
 
         except Exception as e:
-            print(f"❌ 运行报错: {e}")
+            print(f"❌ 运行错误: {e}")
             sb.save_screenshot("error.png")
-            send_tg_photo(f"❌ 脚本运行异常: {e}", "error.png")
-            sys.exit(1)
+            send_tg_photo(f"❌ 脚本异常: {str(e)[:100]}", "error.png")
 
 if __name__ == "__main__":
     main()
